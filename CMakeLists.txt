@@ -12,7 +12,7 @@ set(VO_DECLICKER_BUNDLE_ID   "com.kyle95wm.vodeclicker") # com.kyle95wm.<lowerca
 set(VO_DECLICKER_GITHUB_REPO "kyle95wm/vo-declicker")    # owner/repo the update checker reads
 set(VO_DECLICKER_ACCENT      "0xffa78bfa")              # the plugin's one accent colour (ARGB)
 set(VO_DECLICKER_DESCRIPTION "Removes mouth clicks and lip smacks from voice-over.")
-set(VO_DECLICKER_VST3_CATEGORIES Fx)                     # e.g. Fx Dynamics / Fx EQ / Fx Tools
+set(VO_DECLICKER_VST3_CATEGORIES Fx Restoration)                     # e.g. Fx Dynamics / Fx EQ / Fx Tools
 
 # The release workflow passes -DVO_DECLICKER_VERSION=<tag without the leading v>,
 # so the version baked into the plugin (and used by the update checker) always

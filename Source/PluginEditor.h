@@ -6,11 +6,12 @@
 #include "UpdateFooter.h"
 
 // Window layout (see CONVENTIONS.md):
-//   header  - plugin name top-left (bold 22), version top-right, one-line subtitle
-//   body    - the controls, accent colour for values/arcs
-//   pills   - Bypass (and other switches) as a row of pill toggles above the footer
-//   footer  - shared UpdateFooter: divider, update status, Check/Download, auto toggle
-class VODeclickerEditor : public juce::AudioProcessorEditor
+//   header  - plugin name, version, subtitle
+//   body    - Sensitivity / Frequency / Length knobs, then a "clicks repaired" counter
+//   pills   - GENTLE|STRONG, LISTEN, ACTIVE|BYPASSED
+//   footer  - shared UpdateFooter
+class VODeclickerEditor : public juce::AudioProcessorEditor,
+                          private juce::Timer
 {
 public:
     explicit VODeclickerEditor (VODeclickerProcessor&);
@@ -20,15 +21,25 @@ public:
     void resized() override;
 
 private:
-    [[maybe_unused]] VODeclickerProcessor& audioProcessor;  // for meters, parameters, etc.
-    brand::LookAndFeel lnf;
+    void timerCallback() override;
+    void setupKnob (juce::Slider&, juce::Label&, const juce::String& name, double defaultValue,
+                    const juce::String& tooltip);
 
-    juce::Slider knob;
-    juce::ToggleButton bypassButton { "Bypass" };
+    VODeclickerProcessor& audioProcessor;
+    brand::LookAndFeel lnf;
+    juce::TooltipWindow tooltips { this, 600 };
+
+    juce::Slider sensitivityKnob, frequencyKnob, lengthKnob;
+    juce::Label sensitivityLabel, frequencyLabel, lengthLabel;
+    juce::ToggleButton strongButton { "Strong" }, listenButton { "Listen" }, bypassButton { "Bypass" };
     UpdateFooter footer;
 
-    juce::AudioProcessorValueTreeState::SliderAttachment knobAttachment;
-    juce::AudioProcessorValueTreeState::ButtonAttachment bypassAttachment;
+    juce::AudioProcessorValueTreeState::SliderAttachment sensitivityAttachment, frequencyAttachment, lengthAttachment;
+    juce::AudioProcessorValueTreeState::ButtonAttachment strongAttachment, listenAttachment, bypassAttachment;
+
+    juce::Rectangle<int> counterArea;
+    uint32_t shownRepairs = 0;
+    float flash = 0.0f;   // 1 right after a repair, fades out
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VODeclickerEditor)
 };

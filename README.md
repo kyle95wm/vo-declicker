@@ -1,17 +1,56 @@
 # VODeclicker
 
-One or two sentences on what VODeclicker does and who it's for. It is available as a VST3 on all platforms, plus an AU on macOS.
+VODeclicker removes mouth clicks and lip smacks from voice-over and audio-description narration.
+It is available as a VST3 on all platforms, plus an AU on macOS.
 
 ![VODeclicker plugin window](docs/screenshot.png)
 
-Describe the problem it solves in a voice-over / audio-description session, and its main idea.
+Mouth noise is the thing you otherwise razor out by hand: tongue ticks, saliva clicks and lip
+smacks in the pauses and at the edges of words. VODeclicker finds them and **rebuilds** those
+few milliseconds from the audio either side, so the room tone or breath carries on underneath
+instead of dropping out. Everywhere else the audio passes through untouched, bit for bit.
+
+Put it on the narration track, after your EQ and before compression (compression makes clicks
+louder and harder to tell from consonants).
+
+## How it works
+
+- **Only the high band is touched.** The voice is split at the *Frequency* knob. Clicks are
+  found and rebuilt above that frequency; the body of the voice below it is never changed.
+- **Level independent.** A click has to stand out from the high band's own recent level, not
+  cross a fixed dBFS threshold, so it behaves the same on a quiet −29 LUFS take as on a hot one.
+- **Short and settled.** A click must be over within *Length*, and afterwards the high band has
+  to drop back to where it was. An "s", breath, or a "t"/"k" release that runs into aspiration
+  and the vowel fails one of those tests and is left alone.
+- **Rebuilt, not muted.** The span is replaced by autoregressive predictions from the audio
+  before and after it, cross-faded, with a little noise shaped like the surrounding sound so
+  longer smacks keep the room's texture.
+- **Latency:** 11 ms, reported to the host (Logic compensates automatically; its low-latency
+  mode bypasses the plugin while you record).
 
 ## Controls
 
-| Control | What it does |
-|---------|--------------|
-| Gain    | Replace with the plugin's real controls |
-| Bypass  | Click-free bypass, also linked to your DAW's bypass |
+| Control | Range (default) | What it does |
+|---------|-----------------|--------------|
+| Sensitivity | 0–100 % (50 %) | How far above the surrounding high band a sound must jump to count as a click. 0 % turns repairs off. |
+| Frequency | 1–8 kHz (3 kHz) | Split point: only content above it is checked and rebuilt. Lower it for thumpier smacks, raise it for very bright voices. |
+| Length | 0.5–8 ms (4 ms) | The longest noise treated as a click. Raise it for wet lip smacks; anything longer is speech. |
+| Gentle / Strong | Gentle | Gentle repairs clicks in pauses and at word edges, and stays out of voiced speech. Strong also repairs clicks inside words. |
+| Listen | off | Hear only what is being removed, to check it isn't eating consonants. |
+| Bypass | off | Click-free bypass, also linked to your DAW's bypass. Latency-compensated, so A/B is exact. |
+
+The counter under the knobs shows how many clicks have been repaired since the plugin was
+opened, and its dot lights up on each repair.
+
+## Usage tips
+
+- Start in **Gentle** at the defaults. Play a section with **Listen** on: you should hear
+  isolated ticks and smacks, not the start of words. If you hear consonants ("t", "k", "ch"),
+  lower Sensitivity or Length.
+- Use **Strong** for takes with clicks inside words (a dry mouth), and check it with Listen:
+  it is much busier than Gentle.
+- Long, wet smacks: raise **Length** towards 6–8 ms, and if they're low and thumpy, lower
+  **Frequency** to 2 kHz.
 
 ## Install
 
@@ -73,6 +112,17 @@ to install them into your user plug-in folders after each build.
   ```
 
 Options: `-DVO_DECLICKER_BUILD_AU=OFF`, `-DVO_DECLICKER_BUILD_STANDALONE=ON`, `-DVO_DECLICKER_JUCE_PATH=/path/to/JUCE`.
+
+The test tool can also run your own recordings through the plugin, which is handy when tuning:
+
+```bash
+./build/VODeclickerTest_artefacts/Release/VODeclickerTest --render take.wav [outDir]
+```
+
+It writes `take_Gentle50.wav`, `take_Strong50.wav`, the matching `_listen` files (only what was
+removed) and `_repairs.txt` label lists (Audacity format: start, end, peak removed), and prints
+how many spans were repaired and how many click-like events were left alone because they didn't
+settle.
 
 To refresh the README screenshot after changing the UI, build with
 `-DVO_DECLICKER_BUILD_SCREENSHOT_TOOL=ON` and run

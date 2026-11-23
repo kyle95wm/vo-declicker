@@ -2,10 +2,11 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "UpdateChecker.h"
+#include "VODeclickerDSP.h"
 
-// Skeleton processor: one "Gain" knob and an internal, automatable Bypass that
-// is also exposed as the host's bypass parameter. Replace the DSP; keep the
-// bypass parameter, the state handling and the shared UpdateChecker member.
+// VODeclicker: finds mouth clicks and lip smacks in a voice and rebuilds them
+// from the audio either side (see VODeclickerDSP.h). Three knobs, Gentle/Strong,
+// Listen, and an internal Bypass that is also the host's bypass parameter.
 class VODeclickerProcessor : public juce::AudioProcessor
 {
 public:
@@ -38,20 +39,36 @@ public:
 
     juce::AudioProcessorParameter* getBypassParameter() const override { return bypassParam; }
 
+    // Spans repaired since the plugin was created (for the UI's counter).
+    uint32_t getRepairCount() const noexcept { return engine.repairs.load (std::memory_order_relaxed); }
+    const declick::Engine& getEngine() const noexcept { return engine; }
+
     juce::AudioProcessorValueTreeState apvts;
     UpdateChecker updateChecker;
 
     // Parameter IDs are part of saved sessions and automation: never rename
     // one after a release (add a new ID instead).
-    static constexpr const char* gainId   = "gain";
-    static constexpr const char* bypassId = "bypass";
+    static constexpr const char* sensitivityId = "sensitivity";
+    static constexpr const char* frequencyId   = "frequency";
+    static constexpr const char* lengthId      = "length";
+    static constexpr const char* strongId      = "strong";
+    static constexpr const char* listenId      = "listen";
+    static constexpr const char* bypassId      = "bypass";
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
+    declick::Settings currentSettings() const;
 
-    std::atomic<float>* gainParam = nullptr;
+    std::atomic<float>* sensitivityParam = nullptr;
+    std::atomic<float>* frequencyParam = nullptr;
+    std::atomic<float>* lengthParam = nullptr;
+    std::atomic<float>* strongParam = nullptr;
+    std::atomic<float>* listenParam = nullptr;
     juce::AudioParameterBool* bypassParam = nullptr;
-    juce::SmoothedValue<float> gain { 1.0f };
+
+    declick::Engine engine;
+    juce::SmoothedValue<float> bypassMix { 0.0f };   // 1 = bypassed
+    juce::SmoothedValue<float> listenMix { 0.0f };   // 1 = listening to what's removed
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VODeclickerProcessor)
 };
