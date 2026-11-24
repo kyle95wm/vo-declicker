@@ -38,7 +38,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout VODeclickerProcessor::create
     juce::NormalisableRange<float> lengthRange (0.5f, (float) declick::kMaxLengthMs, 0.01f);
     lengthRange.setSkewForCentre (3.0f);
     layout.add (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { lengthId, 1 }, "Length", lengthRange, 4.0f,
+        juce::ParameterID { lengthId, 1 }, "Length", lengthRange, 6.0f,
         juce::AudioParameterFloatAttributes()
             .withLabel ("ms")
             .withStringFromValueFunction ([] (float v, int) { return juce::String (v, 1) + " ms"; })));

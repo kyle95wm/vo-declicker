@@ -1,8 +1,10 @@
 // Renders the plugin editor to a PNG without a host, for the README.
 //   cmake -B build -DVO_DECLICKER_BUILD_SCREENSHOT_TOOL=ON && cmake --build build --target VODeclickerScreenshot
 //   ./build/VODeclickerScreenshot_artefacts/Release/VODeclickerScreenshot docs/screenshot.png
+//   (add --advanced to render with the Advanced panel open)
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "PluginProcessor.h"
+#include "PluginEditor.h"
 #include <cstdio>
 
 int main (int argc, char** argv)
@@ -10,9 +12,12 @@ int main (int argc, char** argv)
     const juce::ScopedJuceInitialiser_GUI gui;
 
     const juce::File out = juce::File::getCurrentWorkingDirectory()
-                               .getChildFile (argc > 1 ? argv[1] : "docs/screenshot.png");
+                               .getChildFile (argc > 1 && juce::String (argv[1]) != "--advanced" ? argv[1] : "docs/screenshot.png");
 
     VODeclickerProcessor processor;
+    for (int i = 1; i < argc; ++i)
+        if (juce::String (argv[i]) == "--advanced")
+            processor.apvts.state.setProperty (VODeclickerEditor::advancedStateId, true, nullptr);
     std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
     editor->setVisible (true);
 

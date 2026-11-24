@@ -30,26 +30,30 @@ louder and harder to tell from consonants).
 
 ## Controls
 
+The main window is one knob. Most voices only need **Sensitivity**; the rest sits under
+**Advanced** (click it to open the panel below; the plugin remembers whether it was open).
+
 | Control | Range (default) | What it does |
 |---------|-----------------|--------------|
 | Sensitivity | 0–100 % (50 %) | How far above the surrounding high band a sound must jump to count as a click. 0 % turns repairs off. |
-| Frequency | 1–8 kHz (3 kHz) | Split point: only content above it is checked and rebuilt. Lower it for thumpier smacks, raise it for very bright voices. |
-| Length | 0.5–8 ms (4 ms) | The longest noise treated as a click. Raise it for wet lip smacks; anything longer is speech. |
-| Gentle / Strong | Gentle | Gentle repairs clicks in pauses and at word edges, and stays out of voiced speech. Strong also repairs clicks inside words. |
 | Listen | off | Hear only what is being removed, to check it isn't eating consonants. |
 | Bypass | off | Click-free bypass, also linked to your DAW's bypass. Latency-compensated, so A/B is exact. |
+| *Advanced:* Frequency | 1–8 kHz (3 kHz) | Split point: only content above it is checked and rebuilt. Lower it for thumpier smacks, raise it for very bright voices. |
+| *Advanced:* Length | 0.5–8 ms (6 ms) | The longest noise treated as a click. Raise it for wet lip smacks; anything longer is speech. |
+| *Advanced:* Gentle / Strong | Gentle | Gentle repairs clicks in pauses and at word edges, and stays out of voiced speech. Strong also repairs clicks inside words. |
 
-The counter under the knobs shows how many clicks have been repaired since the plugin was
-opened, and its dot lights up on each repair.
+All of them are host parameters, so the advanced ones can still be automated while the panel
+is closed. The counter under the knob shows how many clicks have been repaired since the
+plugin was opened, and its dot lights up on each repair.
 
 ## Usage tips
 
-- Start in **Gentle** at the defaults. Play a section with **Listen** on: you should hear
+- Start at the defaults and adjust only **Sensitivity**. Play a section with **Listen** on: you should hear
   isolated ticks and smacks, not the start of words. If you hear consonants ("t", "k", "ch"),
   lower Sensitivity or Length.
 - Use **Strong** for takes with clicks inside words (a dry mouth), and check it with Listen:
   it is much busier than Gentle.
-- Long, wet smacks: raise **Length** towards 6–8 ms, and if they're low and thumpy, lower
+- Long, wet smacks: raise **Length** to 8 ms, and if they're low and thumpy, lower
   **Frequency** to 2 kHz.
 
 ## Install

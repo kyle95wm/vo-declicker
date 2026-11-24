@@ -5,8 +5,9 @@
 #include "VODeclickerDSP.h"
 
 // VODeclicker: finds mouth clicks and lip smacks in a voice and rebuilds them
-// from the audio either side (see VODeclickerDSP.h). Three knobs, Gentle/Strong,
-// Listen, and an internal Bypass that is also the host's bypass parameter.
+// from the audio either side (see VODeclickerDSP.h). Sensitivity, Listen, an
+// internal Bypass that is also the host's bypass parameter, and Frequency /
+// Length / Gentle-Strong (shown under Advanced in the editor).
 class VODeclickerProcessor : public juce::AudioProcessor
 {
 public:

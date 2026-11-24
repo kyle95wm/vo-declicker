@@ -10,10 +10,15 @@
 //   VODeclickerTest --render take.wav [outDir]
 // processes the take at a few settings, writes take_<setting>.wav files, and
 // prints how many spans were repaired and how much was changed.
+//   VODeclickerTest --sweep take.wav outDir freqHz lengthMs [sensitivity%] [strong] [--wav]
+// processes the take at one setting with Listen on and writes
+// take_f<freq>_l<len>_repairs.txt (Audacity labels); --wav also writes what was
+// removed. Run it in parallel over a grid to compare Frequency/Length settings.
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "PluginProcessor.h"
+#include "PluginEditor.h"
 #include <cstdio>
 #include <random>
 
@@ -500,7 +505,7 @@ void testDefaults()
     auto text = [&p] (const char* id) { auto* q = p->apvts.getParameter (id); return q->getText (q->getValue(), 32); };
     CHECK (text (VODeclickerProcessor::sensitivityId) == "50 %", "sensitivity default shows %s", text (VODeclickerProcessor::sensitivityId).toRawUTF8());
     CHECK (text (VODeclickerProcessor::frequencyId) == "3.0 kHz", "frequency default shows %s", text (VODeclickerProcessor::frequencyId).toRawUTF8());
-    CHECK (text (VODeclickerProcessor::lengthId) == "4.0 ms", "length default shows %s", text (VODeclickerProcessor::lengthId).toRawUTF8());
+    CHECK (text (VODeclickerProcessor::lengthId) == "6.0 ms", "length default shows %s", text (VODeclickerProcessor::lengthId).toRawUTF8());
     CHECK (text (VODeclickerProcessor::strongId) == "Gentle", "mode default shows %s", text (VODeclickerProcessor::strongId).toRawUTF8());
 }
 
@@ -524,6 +529,32 @@ void testEditorOpens()
     auto p = makeProcessor (48000.0, 2);
     std::unique_ptr<juce::AudioProcessorEditor> editor (p->createEditor());
     CHECK (editor != nullptr && editor->getWidth() > 0, "editor failed to open");
+    CHECK (editor->getHeight() == VODeclickerEditor::collapsedHeight, "editor should open with Advanced closed");
+
+    // Advanced opens below and grows the window; the choice is saved with the session.
+    auto* link = dynamic_cast<juce::HyperlinkButton*> (
+        [&]() -> juce::Component* {
+            for (auto* c : editor->getChildren())
+                if (dynamic_cast<juce::HyperlinkButton*> (c) != nullptr)
+                    return c;
+            return nullptr;
+        }());
+    CHECK (link != nullptr, "no Advanced link");
+    if (link == nullptr)
+        return;
+    link->onClick();   // what a click calls (triggerClick is async)
+    CHECK (editor->getHeight() == VODeclickerEditor::collapsedHeight + VODeclickerEditor::advancedHeight,
+           "Advanced should grow the window");
+
+    juce::MemoryBlock state;
+    p->getStateInformation (state);
+    editor.reset();
+
+    auto q = makeProcessor (48000.0, 2);
+    q->setStateInformation (state.getData(), (int) state.getSize());
+    std::unique_ptr<juce::AudioProcessorEditor> reopened (q->createEditor());
+    CHECK (reopened->getHeight() == VODeclickerEditor::collapsedHeight + VODeclickerEditor::advancedHeight,
+           "Advanced open state should be restored");
 }
 
 // ---- --render mode -------------------------------------------------------------
@@ -627,6 +658,72 @@ int render (const juce::File& inFile, juce::File outDir)
     }
     return 0;
 }
+int sweep (const juce::File& inFile, const juce::File& outDir, float freq, float lenMs,
+           float sens, bool strong, bool writeWav)
+{
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (inFile));
+    if (reader == nullptr) { std::printf ("Can't read %s\n", inFile.getFullPathName().toRawUTF8()); return 1; }
+    outDir.createDirectory();
+
+    const int ch = (int) std::min (2u, reader->numChannels);
+    const double fs = reader->sampleRate;
+    auto p = makeProcessor (fs, ch);
+    setParam (*p, VODeclickerProcessor::frequencyId, freq);
+    setParam (*p, VODeclickerProcessor::lengthId, lenMs);
+    setParam (*p, VODeclickerProcessor::sensitivityId, sens);
+    setParam (*p, VODeclickerProcessor::strongId, strong ? 1.0f : 0.0f);
+    setParam (*p, VODeclickerProcessor::listenId, 1.0f);
+    p->prepareToPlay (fs, kBlock);
+    const int lat = p->getLatencySamples();
+
+    const int total = (int) reader->lengthInSamples;
+    juce::AudioBuffer<float> removed (ch, writeWav ? total : 0);
+    juce::AudioBuffer<float> block (ch, kBlock);
+    juce::MidiBuffer midi;
+    for (int pos = 0; pos < total + lat; pos += kBlock)
+    {
+        const int n = std::min (kBlock, total + lat - pos);
+        block.setSize (ch, n, false, false, true);
+        block.clear();
+        if (pos < total)
+            reader->read (&block, 0, std::min (n, total - pos), pos, true, ch > 1);
+        p->processBlock (block, midi);
+        if (writeWav)
+            for (int i = 0; i < n; ++i)
+            {
+                const int at = pos + i - lat;
+                if (at >= 0 && at < total)
+                    for (int c = 0; c < ch; ++c)
+                        removed.setSample (c, at, block.getSample (c, i));
+            }
+    }
+
+    const auto tag = inFile.getFileNameWithoutExtension() + "_f" + juce::String ((int) freq) + "_l"
+                     + juce::String (lenMs, 1) + (strong ? "_strong" : "");
+    const auto& eng = p->getEngine();
+    const int logged = (int) std::min<uint32_t> (p->getRepairCount(), (uint32_t) declick::Engine::kLogSize);
+    juce::String labels;
+    for (int r = 0; r < logged; ++r)
+        labels << juce::String ((double) eng.repairLog[r].start / fs, 4) << "\t"
+               << juce::String ((double) eng.repairLog[r].end / fs, 4) << "\t" << r << "\n";
+    outDir.getChildFile (tag + "_repairs.txt").replaceWithText (labels);
+
+    if (writeWav)
+    {
+        auto outFile = outDir.getChildFile (tag + "_removed.wav");
+        outFile.deleteFile();
+        std::unique_ptr<juce::OutputStream> stream (outFile.createOutputStream());
+        juce::WavAudioFormat wav;
+        if (auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions{}.withSampleRate (fs)
+                                                           .withNumChannels (ch).withBitsPerSample (24)))
+            writer->writeFromAudioSampleBuffer (removed, 0, total);
+    }
+    std::printf ("%g,%g,%u,%u%s\n", freq, lenMs, p->getRepairCount(), eng.rejected.load(),
+                 logged < (int) p->getRepairCount() ? ",log-truncated" : "");
+    return 0;
+}
 } // namespace
 
 int main (int argc, char** argv)
@@ -636,6 +733,21 @@ int main (int argc, char** argv)
     if (argc >= 3 && juce::String (argv[1]) == "--render")
         return render (juce::File (juce::File::getCurrentWorkingDirectory().getChildFile (argv[2])),
                        argc >= 4 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[3]) : juce::File());
+    if (argc >= 6 && juce::String (argv[1]) == "--sweep")
+    {
+        bool strong = false, wav = false;
+        float sens = 50.0f;
+        for (int i = 6; i < argc; ++i)
+        {
+            const juce::String a (argv[i]);
+            if (a == "strong") strong = true;
+            else if (a == "--wav") wav = true;
+            else sens = a.getFloatValue();
+        }
+        const auto cwd = juce::File::getCurrentWorkingDirectory();
+        return sweep (cwd.getChildFile (argv[2]), cwd.getChildFile (argv[3]),
+                      juce::String (argv[4]).getFloatValue(), juce::String (argv[5]).getFloatValue(), sens, strong, wav);
+    }
 
     testLatency();
     testCleanVoiceUntouched();

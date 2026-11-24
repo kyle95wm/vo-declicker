@@ -59,7 +59,7 @@ struct Settings
 {
     float sensitivity = 0.5f;   // 0..1, 0 = off
     float frequencyHz = 3000.0f;
-    float lengthMs    = 4.0f;
+    float lengthMs    = 6.0f;   // tested on a long VO take: 4 ms missed real smacks, 8 ms added doubtful ones
     bool  strong      = false;  // false = Gentle: leave clicks inside voiced speech alone
 };
 

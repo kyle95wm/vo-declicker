@@ -7,13 +7,19 @@
 
 // Window layout (see CONVENTIONS.md):
 //   header  - plugin name, version, subtitle
-//   body    - Sensitivity / Frequency / Length knobs, then a "clicks repaired" counter
-//   pills   - GENTLE|STRONG, LISTEN, ACTIVE|BYPASSED
+//   body    - one big Sensitivity knob, then a "clicks repaired" counter
+//   pills   - LISTEN, ACTIVE|BYPASSED
+//   link    - "Advanced", which opens a panel below with Frequency / Length
+//             and GENTLE|STRONG (the window grows to fit; the open/closed
+//             state is saved with the session, not as a parameter)
 //   footer  - shared UpdateFooter
 class VODeclickerEditor : public juce::AudioProcessorEditor,
                           private juce::Timer
 {
 public:
+    static constexpr int width = 460, collapsedHeight = 500, advancedHeight = 160;
+    static constexpr const char* advancedStateId = "advancedOpen";   // property on apvts.state
+
     explicit VODeclickerEditor (VODeclickerProcessor&);
     ~VODeclickerEditor() override;
 
@@ -23,7 +29,9 @@ public:
 private:
     void timerCallback() override;
     void setupKnob (juce::Slider&, juce::Label&, const juce::String& name, double defaultValue,
-                    const juce::String& tooltip);
+                    const juce::String& tooltip, int textBoxWidth);
+    void setAdvancedOpen (bool open);
+    bool isAdvancedOpen() const;
 
     VODeclickerProcessor& audioProcessor;
     brand::LookAndFeel lnf;
@@ -32,12 +40,14 @@ private:
     juce::Slider sensitivityKnob, frequencyKnob, lengthKnob;
     juce::Label sensitivityLabel, frequencyLabel, lengthLabel;
     juce::ToggleButton strongButton { "Strong" }, listenButton { "Listen" }, bypassButton { "Bypass" };
+    juce::Label modeLabel;
+    juce::HyperlinkButton advancedLink;
     UpdateFooter footer;
 
     juce::AudioProcessorValueTreeState::SliderAttachment sensitivityAttachment, frequencyAttachment, lengthAttachment;
     juce::AudioProcessorValueTreeState::ButtonAttachment strongAttachment, listenAttachment, bypassAttachment;
 
-    juce::Rectangle<int> counterArea;
+    juce::Rectangle<int> counterArea, advancedArea;
     uint32_t shownRepairs = 0;
     float flash = 0.0f;   // 1 right after a repair, fades out
 

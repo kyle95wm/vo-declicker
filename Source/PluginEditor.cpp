@@ -13,11 +13,18 @@ VODeclickerEditor::VODeclickerEditor (VODeclickerProcessor& p)
     setLookAndFeel (&lnf);
 
     setupKnob (sensitivityKnob, sensitivityLabel, "SENSITIVITY", 50.0,
-               "How readily a sound counts as a click. 0 % turns repairs off.");
+               "How readily a sound counts as a click. 0 % turns repairs off.", 90);
     setupKnob (frequencyKnob, frequencyLabel, "FREQUENCY", 3000.0,
-               "Only content above this frequency is checked and rebuilt. The low band is never touched.");
-    setupKnob (lengthKnob, lengthLabel, "LENGTH", 4.0,
-               "The longest noise treated as a click. Raise it for wet lip smacks; anything longer is left alone as speech.");
+               "Only content above this frequency is checked and rebuilt. The low band is never touched.", 76);
+    setupKnob (lengthKnob, lengthLabel, "LENGTH", 6.0,
+               "The longest noise treated as a click. Raise it for wet lip smacks; anything longer is left alone as speech.", 76);
+    sensitivityLabel.setFont (juce::FontOptions (15.0f, juce::Font::bold));
+
+    addAndMakeVisible (modeLabel);
+    modeLabel.setText ("MODE", juce::dontSendNotification);
+    modeLabel.setJustificationType (juce::Justification::centred);
+    modeLabel.setFont (juce::FontOptions (brand::pillSize, juce::Font::bold));
+    modeLabel.setColour (juce::Label::textColourId, brand::textDim);
 
     brand::makePill (strongButton, "GENTLE", "STRONG");
     strongButton.setTooltip ("Gentle repairs clicks in pauses and at word edges only. "
@@ -32,11 +39,39 @@ VODeclickerEditor::VODeclickerEditor (VODeclickerProcessor& p)
     bypassButton.setTooltip ("Bypass the processing (also linked to your DAW's bypass).");
     addAndMakeVisible (bypassButton);
 
+    addAndMakeVisible (advancedLink);
+    advancedLink.setFont (juce::FontOptions (brand::captionSize), false, juce::Justification::centred);
+    advancedLink.setColour (juce::HyperlinkButton::textColourId, brand::textDim);
+    advancedLink.setTooltip ("Frequency, Length and Gentle/Strong. The defaults suit most voices.");
+    advancedLink.onClick = [this] { setAdvancedOpen (! isAdvancedOpen()); };
+
     addAndMakeVisible (footer);
 
     shownRepairs = audioProcessor.getRepairCount();
-    setSize (460, 440);
+    setAdvancedOpen (isAdvancedOpen());
     startTimerHz (30);
+}
+
+bool VODeclickerEditor::isAdvancedOpen() const
+{
+    return (bool) audioProcessor.apvts.state.getProperty (advancedStateId, false);
+}
+
+void VODeclickerEditor::setAdvancedOpen (bool open)
+{
+    audioProcessor.apvts.state.setProperty (advancedStateId, open, nullptr);
+
+    for (juce::Component* c : std::initializer_list<juce::Component*> {
+             &frequencyKnob, &frequencyLabel, &lengthKnob, &lengthLabel, &modeLabel, &strongButton })
+        c->setVisible (open);
+    advancedLink.setButtonText (open ? "Hide advanced" : "Advanced");
+
+    const int h = collapsedHeight + (open ? advancedHeight : 0);
+    if (getHeight() == h)
+        resized();
+    else
+        setSize (width, h);
+    repaint();
 }
 
 VODeclickerEditor::~VODeclickerEditor()
@@ -45,14 +80,14 @@ VODeclickerEditor::~VODeclickerEditor()
 }
 
 void VODeclickerEditor::setupKnob (juce::Slider& knob, juce::Label& label, const juce::String& name,
-                                   double defaultValue, const juce::String& tooltip)
+                                   double defaultValue, const juce::String& tooltip, int textBoxWidth)
 {
     // Add controls *before* styling them (see the template's note on text boxes).
     addAndMakeVisible (knob);
     knob.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     knob.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f,
                               juce::MathConstants<float>::pi * 2.75f, true);
-    knob.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 90, 22);
+    knob.setTextBoxStyle (juce::Slider::TextBoxBelow, false, textBoxWidth, 22);
     knob.setDoubleClickReturnValue (true, defaultValue);
     knob.setVelocityBasedMode (false);
     knob.setTooltip (tooltip);
@@ -100,6 +135,12 @@ void VODeclickerEditor::paint (juce::Graphics& g)
     g.setColour (shownRepairs > 0 ? brand::textMain : brand::textDim);
     g.setFont (juce::FontOptions (brand::captionSize));
     g.drawText (text, r.withTrimmedLeft (30.0f).withTrimmedRight (14.0f), juce::Justification::centredLeft);
+
+    if (isAdvancedOpen())
+    {
+        g.setColour (brand::panel);
+        g.fillRoundedRectangle (advancedArea.toFloat(), 8.0f);
+    }
 }
 
 void VODeclickerEditor::resized()
@@ -110,11 +151,33 @@ void VODeclickerEditor::resized()
     footer.setBounds (area.removeFromBottom (brand::footerHeight));
     area.removeFromBottom (10);
 
+    // Advanced panel: Frequency | Length | Mode, only laid out when open.
+    advancedArea = {};
+    if (isAdvancedOpen())
+    {
+        advancedArea = area.removeFromBottom (advancedHeight - 10);
+        area.removeFromBottom (10);
+
+        auto panel = advancedArea.reduced (10, 8);
+        const int colW = panel.getWidth() / 3;
+        juce::Slider* knobs[] = { &frequencyKnob, &lengthKnob };
+        juce::Label* labels[] = { &frequencyLabel, &lengthLabel };
+        for (int i = 0; i < 2; ++i)
+        {
+            auto col = panel.removeFromLeft (colW);
+            labels[i]->setBounds (col.removeFromTop (18));
+            knobs[i]->setBounds (col.withSizeKeepingCentre (std::min (col.getWidth(), col.getHeight() + 10), col.getHeight()));
+        }
+        modeLabel.setBounds (panel.removeFromTop (18));
+        strongButton.setBounds (panel.withSizeKeepingCentre (std::min (panel.getWidth() - 10, 110), 30));
+    }
+
+    advancedLink.setBounds (area.removeFromBottom (22).withSizeKeepingCentre (140, 22));
+    area.removeFromBottom (4);
+
     auto pills = area.removeFromBottom (36);
     const int pillW = 120, gap = 12;
-    auto row = pills.withSizeKeepingCentre (3 * pillW + 2 * gap, 30);
-    strongButton.setBounds (row.removeFromLeft (pillW));
-    row.removeFromLeft (gap);
+    auto row = pills.withSizeKeepingCentre (2 * pillW + gap, 30);
     listenButton.setBounds (row.removeFromLeft (pillW));
     row.removeFromLeft (gap);
     bypassButton.setBounds (row.removeFromLeft (pillW));
@@ -124,13 +187,6 @@ void VODeclickerEditor::resized()
     area.removeFromBottom (8);
 
     area.removeFromTop (8);
-    const int colW = area.getWidth() / 3;
-    juce::Slider* knobs[] = { &sensitivityKnob, &frequencyKnob, &lengthKnob };
-    juce::Label* labels[] = { &sensitivityLabel, &frequencyLabel, &lengthLabel };
-    for (int i = 0; i < 3; ++i)
-    {
-        auto col = area.removeFromLeft (colW);
-        labels[i]->setBounds (col.removeFromTop (20));
-        knobs[i]->setBounds (col.withSizeKeepingCentre (std::min (col.getWidth(), col.getHeight()), col.getHeight()));
-    }
+    sensitivityLabel.setBounds (area.removeFromTop (22));
+    sensitivityKnob.setBounds (area.withSizeKeepingCentre (area.getHeight(), area.getHeight()));
 }
