@@ -17,7 +17,7 @@ set(VO_DECLICKER_VST3_CATEGORIES Fx Restoration)                     # e.g. Fx D
 # The release workflow passes -DVO_DECLICKER_VERSION=<tag without the leading v>,
 # so the version baked into the plugin (and used by the update checker) always
 # matches the GitHub Release it ships in.
-set(VO_DECLICKER_VERSION "0.1.0" CACHE STRING "Plugin version (major.minor.patch)")
+set(VO_DECLICKER_VERSION "0.2.0" CACHE STRING "Plugin version (major.minor.patch)")
 
 # Must be set before project() to take effect. 10.13 is what both released
 # plugins ship with; JUCE 8 supports it and it covers every Mac running Logic 10.4+.
