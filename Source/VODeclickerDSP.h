@@ -9,17 +9,20 @@
 //   x ──┬─ Butterworth HP @ Frequency ─ detector (high band energy)
 //       └─ Butterworth LP @ Frequency ─ low band level: "is this voiced?" (Gentle)
 //
-//   At repair time only, the high band around the span is re-derived with a
-//   steep (8th-order) high-pass run forwards and backwards (zero phase), so that
-//   low = x - high is an exact, phase-true complement: removing the high band
-//   over the span removes the click's high band and nothing else.
+//   At repair time only, the band above half of Frequency (the repair band)
+//   around the span is re-derived with a steep (8th-order) high-pass run
+//   forwards and backwards (zero phase), so that low = x - high is an exact,
+//   phase-true complement: removing that band over the span removes the
+//   click's upper band and nothing else. The repair band starts an octave
+//   below the detection band because, measured against RX Mouth De-click on a
+//   real take, many clicks carry much of their energy there (1-3 kHz).
 //
 //   output = x(delayed) - correction(delayed)
 //
 // The correction is zero everywhere except inside repaired spans, where it is
-// (original high band - rebuilt high band). So outside repairs the output is
-// the input delayed, bit for bit, and only high-passed content is ever
-// replaced: the low band is never touched. Moving
+// (original repair band - rebuilt repair band). So outside repairs the output
+// is the input delayed, bit for bit, and only high-passed content is ever
+// replaced: the body of the voice below the repair band is never touched. Moving
 // the Frequency knob only changes how future corrections are computed, so it
 // can't click.
 //
@@ -27,6 +30,12 @@
 // band's own recent level (a ratio, never a dBFS threshold) and must be over
 // within `Length`. Anything that stays loud for longer (an "s", a "t" release
 // into a vowel, breath) is speech and is left alone.
+//
+// Lip smacks are often a train of pops a few ms apart, each landing before the
+// last has settled. A pop also ends once it drops well below its own peak, so
+// the pops separate even when the gaps between them stay above the threshold,
+// and a pop followed by another short pop of similar strength is repaired
+// whatever its settle window held. Only the last pop of the train has to settle.
 //
 // Repair: Burg autoregressive models fitted to the high band just before and
 // just after the span, extrapolated forward and backward and cross-faded.
@@ -38,6 +47,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <atomic>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 namespace declick
@@ -48,12 +58,16 @@ constexpr double kPrePadMs     = 1.0;   // repaired before the detected onset (d
 constexpr double kPostPadMs    = 1.0;   // repaired after the detected end
 constexpr double kRightCtxMs   = 1.0;   // clean audio after the span used for the backward model
 constexpr double kLeftCtxMs    = 4.0;   // clean audio before the span used for the forward model
-constexpr double kLatencyMs    = 11.0;  // >= max length + pads + right context
+constexpr double kLatencyMs    = 24.0;  // longest span + pads, plus room to see the next pop of a smack resolve
 constexpr double kSettleMs     = 6.0;   // how long after a click the high band must settle
+constexpr double kPopDropDb    = 15.0;  // a pop is over once it falls this far below its own peak
+constexpr double kPopMatchDb   = 12.0;  // pops of one smack peak within this of each other
+constexpr double kTailGapMs    = 2.0;   // a weaker event this soon after a pop is that pop's ringing tail
 constexpr int    kOrder        = 16;    // AR model order
+constexpr double kRepairRatio  = 0.5;   // rebuilt from this fraction of Frequency upwards
 
-static_assert (kLatencyMs >= kMaxLengthMs + kPrePadMs + kPostPadMs + kRightCtxMs,
-               "latency must cover the longest span plus its right-hand context");
+static_assert (kLatencyMs >= kMaxLengthMs + kPrePadMs + kPostPadMs + kSettleMs + kMaxLengthMs,
+               "latency must cover the longest span, its settle window and the next pop resolving");
 
 struct Settings
 {
@@ -212,6 +226,8 @@ public:
         aMid    = coeff (2.0);
         holdLen = std::max (2, (int) std::round (0.5 * 0.001 * fs));
         settleLen = (int) std::round (kSettleMs * 0.001 * fs);
+        settleVals.assign ((size_t) settleLen + 1, 0.0);
+        tailGap = std::max (1, (int) std::round (kTailGapMs * 0.001 * fs));
         aLow    = coeff (5.0);
         aLvlUp  = coeff (50.0);
         aLvlDn  = coeff (5000.0);
@@ -236,6 +252,7 @@ public:
         speechLvl = kEnergyFloor; logFloor = 0.0;
         state = State::idle;
         pending = false;
+        prevHeld = false;
         rng = 0x12345678u;
     }
 
@@ -250,7 +267,10 @@ public:
                 split[ch].set (false, fs, fc);
                 detect[ch].set (true, fs, fc);
             }
-            zeroPhase.set (true, fs, fc);
+            // Detect above Frequency, where clicks stand out from the voice, but
+            // rebuild from half of it: many clicks carry much of their energy in
+            // the octave below (measured against RX Mouth De-click on a real take).
+            zeroPhase.set (true, fs, std::max (200.0, fc * kRepairRatio));
             lastFreq = s.frequencyHz;
         }
         enabled = s.sensitivity > 0.0f;
@@ -292,8 +312,8 @@ public:
         {
             if (now >= settleFrom && now <= settleTo)
             {
-                settleSum += std::log (eFast + kEnergyFloor) - pendingBg;
-                ++settleCount;
+                if (settleCount < (int) settleVals.size())
+                    settleVals[(size_t) settleCount++] = std::log (eFast + kEnergyFloor) - pendingBg;
             }
             if (now >= pendingRepairAt)
                 finishPending (numCh, pendingB + rightCtx);
@@ -364,9 +384,25 @@ private:
             case State::idle:
                 if (enabled && above)
                 {
-                    if (pending)   // a new event would land in the pending repair's right context: decide now
-                        finishPending (numCh, now - prePad - 1);
+                    // A new event lands in the pending repair's right context.
+                    // Don't decide yet: if it turns out to be another short pop,
+                    // the pending one was part of a lip smack (a train of pops)
+                    // and is repaired whatever its settle window said. If it
+                    // turns out to be a longer sound, the usual settle verdict,
+                    // taken now, stands.
+                    if (pending)
+                    {
+                        pending = false;
+                        prevHeld = true;
+                        // Too little of its settle window seen to call it settled.
+                        prevSettled = settleCount >= settleLen / 2 && isSettled();
+                        prevA = pendingA;
+                        prevB = pendingB;
+                        prevRightEnd = now - prePad - 1;
+                        prevPeak = pendingPeak;
+                    }
                     state = State::candidate;
+                    peakLog = std::log (eFast + kEnergyFloor);
                     onset = now;
                     onsetLow = lowBefore;
                     belowCount = 0;
@@ -377,8 +413,12 @@ private:
 
             case State::candidate:
             {
-                // Over once it has stayed 3 dB under the threshold for holdLen samples.
-                const bool below = std::log (eFast + kEnergyFloor) < logBg + logThreshold - 0.693;
+                // Over once it has stayed 3 dB under the threshold, or far under
+                // its own peak (so the pops of a smack separate), for holdLen samples.
+                const double lf = std::log (eFast + kEnergyFloor);
+                peakLog = std::max (peakLog, lf);
+                const bool below = lf < logBg + logThreshold - 0.693
+                                || lf < peakLog - kPopDropDb * 0.2302585;
                 if (below)
                 {
                     if (belowCount++ == 0)
@@ -392,21 +432,37 @@ private:
                 if (belowCount > 0 && belowStart - onset > maxLen)
                 {
                     state = State::longSound;
+                    resolveHeld (numCh, false);
                 }
                 else if (belowCount >= holdLen)
                 {
                     state = State::idle;
-                    if (settings.strong || ! isVoiced (onsetLow))
+                    // Another short pop about as strong: the held one was a pop
+                    // too. (The flutter of aspiration after a "t" is far weaker
+                    // than the burst, so it doesn't count.)
+                    const bool popMatch = peakLog > prevPeak - kPopMatchDb * 0.2302585;
+                    // Much weaker and straight after it: the held pop's own
+                    // ringing tail, split off by the drop-below-peak rule. It
+                    // joins the held pop's span, and the two settle together.
+                    const int64_t tailA = prevA;
+                    const bool tail = prevHeld && ! popMatch
+                                   && onset - (prevB - postPad) <= tailGap
+                                   && belowStart + postPad - std::max (tailA, now - latency + 1) < maxRegion;
+                    if (tail)
+                        prevHeld = false;
+                    else
+                        resolveHeld (numCh, popMatch);
+                    if (settings.strong || ! isVoiced (onsetLow) || tail)
                     {
-                        pendingA = std::max (onset - prePad, now - latency + 1);
+                        pendingA = std::max (tail ? tailA : onset - prePad, now - latency + 1);
                         pendingB = belowStart + postPad;
                         pendingBg = logBg;   // still frozen at its pre-click value
+                        pendingPeak = tail ? std::max (peakLog, prevPeak) : peakLog;
                         // Watch the high band settle after the click for as long
                         // as the latency allows (up to settleLen), then decide.
                         settleFrom = belowStart + holdLen;
                         settleTo = std::min (belowStart + settleLen, pendingA + latency - 1);
-                        settleSum = 0.0;
-                        settleCount = 0;
+                            settleCount = 0;
                         pendingRepairAt = std::max ({ now, pendingB + rightCtx, settleTo });
                         pending = true;
                     }
@@ -414,6 +470,7 @@ private:
                 else if (belowCount == 0 && now - onset > maxLen)
                 {
                     state = State::longSound;   // speech, not a click
+                    resolveHeld (numCh, false);
                 }
                 break;
             }
@@ -431,12 +488,36 @@ private:
     // A click has to settle: afterwards the high band must fall back near its
     // level before the click. A consonant release ("t", "k") runs straight
     // into aspiration or the vowel instead, so it fails this and is left alone.
+    //
+    // Judged on the median of the window, not the mean, so the click's own
+    // short ringing tail can't outvote the rest of it, while aspiration or a
+    // vowel fills the whole window.
+    bool isSettled() noexcept
+    {
+        if (settleCount == 0)
+            return true;
+        auto* v = settleVals.data();
+        std::nth_element (v, v + settleCount / 2, v + settleCount);
+        return v[settleCount / 2] < 0.5 * logThreshold;
+    }
+
     void finishPending (int numCh, int64_t rightEnd) noexcept
     {
         pending = false;
-        const bool settled = settleCount == 0 || settleSum / settleCount < 0.5 * logThreshold;
-        if (settled)
+        if (isSettled())
             repair (numCh, pendingA, pendingB, rightEnd);
+        else
+            rejected.fetch_add (1, std::memory_order_relaxed);
+    }
+
+    // Decides a pop held back while the next event played out.
+    void resolveHeld (int numCh, bool nextWasPop) noexcept
+    {
+        if (! prevHeld)
+            return;
+        prevHeld = false;
+        if (nextWasPop || prevSettled)
+            repair (numCh, prevA, prevB, prevRightEnd);
         else
             rejected.fetch_add (1, std::memory_order_relaxed);
     }
@@ -605,7 +686,12 @@ private:
     bool pending = false;
     int64_t pendingA = 0, pendingB = 0, pendingRepairAt = 0;
     int64_t settleFrom = 0, settleTo = 0;
-    double pendingBg = 0.0, settleSum = 0.0;
+    double pendingBg = 0.0, peakLog = 0.0, pendingPeak = 0.0, prevPeak = 0.0;
+    std::vector<double> settleVals;
+    bool prevHeld = false, prevSettled = false;
+    int64_t prevA = 0, prevB = 0, prevRightEnd = 0;
+
+    int tailGap = 1;
     int settleCount = 0, settleLen = 1;
     uint32_t rng = 0x12345678u;
 };

@@ -15,17 +15,20 @@ louder and harder to tell from consonants).
 
 ## How it works
 
-- **Only the high band is touched.** The voice is split at the *Frequency* knob. Clicks are
-  found and rebuilt above that frequency; the body of the voice below it is never changed.
+- **Only the upper band is touched.** Clicks are found above the *Frequency* knob, where they
+  stand out from the voice, and rebuilt from an octave below it (1.5 kHz at the default 3 kHz),
+  since many clicks carry much of their energy there. The body of the voice below that is
+  never changed.
 - **Level independent.** A click has to stand out from the high band's own recent level, not
   cross a fixed dBFS threshold, so it behaves the same on a quiet −29 LUFS take as on a hot one.
 - **Short and settled.** A click must be over within *Length*, and afterwards the high band has
   to drop back to where it was. An "s", breath, or a "t"/"k" release that runs into aspiration
-  and the vowel fails one of those tests and is left alone.
+  and the vowel fails one of those tests and is left alone. A lip smack made of several pops a
+  few milliseconds apart is recognised as a train and repaired pop by pop.
 - **Rebuilt, not muted.** The span is replaced by autoregressive predictions from the audio
   before and after it, cross-faded, with a little noise shaped like the surrounding sound so
   longer smacks keep the room's texture.
-- **Latency:** 11 ms, reported to the host (Logic compensates automatically; its low-latency
+- **Latency:** 24 ms, reported to the host (Logic compensates automatically; its low-latency
   mode bypasses the plugin while you record).
 
 ## Controls
@@ -38,7 +41,7 @@ The main window is one knob. Most voices only need **Sensitivity**; the rest sit
 | Sensitivity | 0–100 % (50 %) | How far above the surrounding high band a sound must jump to count as a click. 0 % turns repairs off. |
 | Listen | off | Hear only what is being removed, to check it isn't eating consonants. |
 | Bypass | off | Click-free bypass, also linked to your DAW's bypass. Latency-compensated, so A/B is exact. |
-| *Advanced:* Frequency | 1–8 kHz (3 kHz) | Split point: only content above it is checked and rebuilt. Lower it for thumpier smacks, raise it for very bright voices. |
+| *Advanced:* Frequency | 1–8 kHz (3 kHz) | Split point: clicks are looked for above it and rebuilt from an octave below it. Lower it for thumpier smacks, raise it for very bright voices. |
 | *Advanced:* Length | 0.5–8 ms (6 ms) | The longest noise treated as a click. Raise it for wet lip smacks; anything longer is speech. |
 | *Advanced:* Gentle / Strong | Gentle | Gentle repairs clicks in pauses and at word edges, and stays out of voiced speech. Strong also repairs clicks inside words. |
 

@@ -220,14 +220,14 @@ const char* chName (int ch) { return ch == 1 ? "mono" : "stereo"; }
 
 // ---- Tests -------------------------------------------------------------------
 
-// "It reports its latency, and it's about 11 ms."
+// "It reports its latency, and it's about 24 ms."
 void testLatency()
 {
     for (double fs : kRates)
     {
         auto p = makeProcessor (fs, 2);
         const double ms = 1000.0 * p->getLatencySamples() / fs;
-        CHECK (ms >= 10.9 && ms <= 11.1, "latency at %.0f Hz is %.2f ms", fs, ms);
+        CHECK (ms >= 23.9 && ms <= 24.1, "latency at %.0f Hz is %.2f ms", fs, ms);
     }
 }
 
@@ -264,6 +264,92 @@ void testClicksInPausesRemoved()
             CHECK (p->getRepairCount() == t.clickPositions.size(),
                    "%.0f Hz %s: %u repairs for %zu clicks", fs, chName (ch), p->getRepairCount(), t.clickPositions.size());
         }
+}
+
+// "A click whose energy sits just under the 3 kHz detection split (2.5-3 kHz)
+//  is removed too, not only its top end." (Found against RX Mouth De-click on a
+//  real take: many clicks live there, and rebuilding only above 3 kHz left them.)
+void testLowerClicksRemoved()
+{
+    for (double fs : kRates)
+    {
+        auto t = makeTake (fs, 1, 4.0, 1.0f, false, false);
+        t.withClicks = t.clean;
+        std::mt19937 rng (5);
+        std::uniform_real_distribution<double> uni (0.0, 1.0);
+        const double period = kSyllable + kPause;
+        std::vector<int> clicks;
+        for (int s = 1; s < (int) (4.0 / period); ++s)
+        {
+            // A ringing click centred at 2.5-3 kHz, in the pause.
+            const int at = (int) ((s * period + kSyllable + 0.04 + 0.06 * uni (rng)) * fs);
+            const double f = 2500.0 + 500.0 * uni (rng), ph = uni (rng) * juce::MathConstants<double>::twoPi;
+            for (int i = 0; i < (int) (0.003 * fs); ++i)
+            {
+                const double tt = i / fs;
+                const double v = 0.05 * std::min (1.0, tt / 0.0001) * std::exp (-tt / 0.0004)
+                               * std::sin (juce::MathConstants<double>::twoPi * f * tt + ph);
+                t.withClicks.setSample (0, at + i, t.withClicks.getSample (0, at + i) + (float) v);
+            }
+            clicks.push_back (at);
+        }
+        auto p = makeProcessor (fs, 1);
+        const auto out = process (*p, t.withClicks);
+        double before = 1.0e9, worst = -1.0e9;
+        for (int pos : clicks)
+        {
+            before = std::min (before, excessDb (t.withClicks, 0, t.clean, pos, fs, 2000.0));
+            worst = std::max (worst, excessDb (out, p->getLatencySamples(), t.clean, pos, fs, 2000.0));
+        }
+        CHECK (before > 15.0, "%.0f Hz: test clicks too quiet above 2 kHz (%.1f dB)", fs, before);
+        CHECK (worst <= 3.0, "%.0f Hz: a 2.5-3 kHz click is still %.1f dB above the clean take above 2 kHz", fs, worst);
+    }
+}
+
+// "A lip smack (a quick train of pops, each one landing before the last has
+//  settled) is removed too, pop by pop, not mistaken for a consonant."
+void testLipSmacksRemoved()
+{
+    for (double fs : kRates)
+    {
+        auto t = makeTake (fs, 1, 4.0, 1.0f, false, false);
+        t.withClicks = t.clean;
+        std::mt19937 rng (7);
+        std::uniform_real_distribution<double> uni (0.0, 1.0);
+        const double period = kSyllable + kPause;
+        std::vector<int> pops;
+        for (int s = 1; s < (int) (4.0 / period); ++s)
+        {
+            // Four ringing pops 2.2-3.2 ms apart, within 3 dB of each other, in the
+            // pause: each one lands while the last is still ringing.
+            int at = (int) ((s * period + kSyllable + 0.04 + 0.04 * uni (rng)) * fs);
+            for (int k = 0; k < 4; ++k)
+            {
+                const double f = 4000.0 + 2000.0 * uni (rng), ph = uni (rng) * juce::MathConstants<double>::twoPi;
+                const double amp = 0.03 * std::pow (10.0, -3.0 * uni (rng) / 20.0);
+                for (int i = 0; i < (int) (0.004 * fs); ++i)
+                {
+                    const double tt = i / fs;
+                    const double v = amp * std::min (1.0, tt / 0.0001) * std::exp (-tt / 0.0006)
+                                   * std::sin (juce::MathConstants<double>::twoPi * f * tt + ph);
+                    t.withClicks.setSample (0, at + i, t.withClicks.getSample (0, at + i) + (float) v);
+                }
+                pops.push_back (at);
+                at += (int) ((0.0022 + 0.001 * uni (rng)) * fs);
+            }
+        }
+        for (float sens : { 20.0f, 50.0f })
+        {
+            auto p = makeProcessor (fs, 1);
+            setParam (*p, VODeclickerProcessor::sensitivityId, sens);
+            const auto out = process (*p, t.withClicks);
+            double worst = -1.0e9;
+            for (int pos : pops)
+                worst = std::max (worst, excessDb (out, p->getLatencySamples(), t.clean, pos, fs, 4500.0));
+            CHECK (worst <= 3.0, "%.0f Hz sensitivity %.0f%%: a lip smack pop is still %.1f dB above the clean take",
+                   fs, sens, worst);
+        }
+    }
 }
 
 // "It works the same on a quiet take (-29 LUFS-ish) as on a hot one: no dBFS thresholds."
@@ -457,7 +543,7 @@ void testLowBandUntouched()
     const auto out = process (*p, t.withClicks);
     const int lat = p->getLatencySamples();
 
-    // Compare below 800 Hz (well under the 3 kHz split): output vs input, over every repaired click.
+    // Compare below 800 Hz (well under the 1.5 kHz repair split): output vs input, over every repaired click.
     declick::Butter4 lpIn, lpOut;
     lpIn.set (false, fs, 800.0);
     lpOut.set (false, fs, 800.0);
@@ -752,6 +838,8 @@ int main (int argc, char** argv)
     testLatency();
     testCleanVoiceUntouched();
     testClicksInPausesRemoved();
+    testLipSmacksRemoved();
+    testLowerClicksRemoved();
     testLevelIndependent();
     testLongSoundsLeftAlone();
     testConsonantReleasesLeftAlone();
